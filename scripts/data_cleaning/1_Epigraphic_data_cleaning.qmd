@@ -1,0 +1,39 @@
+---
+title: "Roman Mobility Project - epigraphic data cleaning"
+author: 
+  - name: Petra Heřmánková
+    orcid: 0000-0002-6349-0540
+    affiliations:
+      - name: Aarhus University
+        country: Denmark
+date: today
+format:
+  html:
+    theme: united
+    toc: true
+    toc-location: left
+    number-sections: true
+    toc-depth: 3
+    df-print: paged
+---
+
+# Loading data
+
+## EDH dataset
+
+Heřmánková, P., & Kaše, V. (2022). EDH (2.0) [Data set]. Zenodo. <https://doi.org/10.5281/zenodo.7303886> 
+
+```{r}
+
+```
+
+
+
+## People (origo) dataset
+
+Sobotkova, A., Heřmánková, P., & Kaše, V. (2025). origo (v1.0) [Data set]. Zenodo. <https://doi.org/10.5281/zenodo.14604222>
+
+```{r}
+
+```
+
