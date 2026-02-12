@@ -17,23 +17,71 @@ format:
     df-print: paged
 ---
 
+# Setup
+
+```{r} 
+#| echo: true
+#| output: false
+library(tidyverse)
+library(sf)
+library(mapview)
+library(leaflet)
+library(sfarrow)
+```
+
 # Loading data
 
 ## EDH dataset
 
 Heřmánková, P., & Kaše, V. (2022). EDH (2.0) [Data set]. Zenodo. <https://doi.org/10.5281/zenodo.7303886> 
 
-```{r}
 
+## LIST dataset
+
+**Vojtěch Kaše, Petra Heřmánková, & Adéla Sobotková. (2024). LIST (v1.2) [Data set]. Zenodo.** <https://doi.org/10.5281/zenodo.10473706>
+
+Dataset is on Zenodo, streamlined and spatial, published in January 2024, v1.2. Download the parquet manually (or explore <https://rdrr.io/github/inbo/inborutils/src/R/download_zenodo.R>), review the metadata table, and then load the parquet with the help of `sfarrow` library into R. If something stops working in the scripts, consider uncommenting and loading earlier versions of the datasets as the scripts were developed with earlier versions of the dataset.
+
+```{r}
+# LIST from https://zenodo.org/records/10473706 (9 Jan 2024, v1.2)
+ LIST <- st_read_parquet("../../data/large_data/LIST_v1-2.parquet") # people need unnesting 
 ```
 
 
+## Origo dataset
 
-## People (origo) dataset
+**Sobotkova, A., Heřmánková, P., & Kaše, V. (2025). origo (v1.0) [Data set]. Zenodo.** <https://doi.org/10.5281/zenodo.14604222>
 
-Sobotkova, A., Heřmánková, P., & Kaše, V. (2025). origo (v1.0) [Data set]. Zenodo. <https://doi.org/10.5281/zenodo.14604222>
+In 2024, a dataset was generated with 2313 people with origo, which differs in that in addition to georeferenced `origo_geometry` and `findspot_geometry` (birth and deathplace), and personal attributes, it also contains information from inscription pertaining to findspot name (ancient and modern), chronological date, and inscription type data. The active geometry here is the linestring connecting the two point geometries.
 
 ```{r}
+# load 2024 origo from parquet
+origo <- st_read_parquet("../../data/origo_geo.parquet")
+```
+
+The `origo` dataset alone has no information about the migrating person and needs to be connected with either LIRE or LIST data in order to inspect the journey in light of the monument attributes as type of material, type of inscription, etc. (gender, status, age, etc. come later in the People section)
+
+```{r}
+# Grab inscriptions from LIST for people who mention origo so you have inscription full attributes
+
+LISTfindspot <- LIST %>% 
+  filter(EDH.ID %in% origo$edh_inscription_id) %>%  # 1919 MATCHES
+  select(matches("EDH.ID|LIST|findspot|Lat|Long|^status|province")) %>% 
+  select(-matches("certainty")) %>% 
+  relocate(c(status,status_notation), .after = Latitude)
+
+colnames(LISTfindspot)
+glimpse(LISTfindspot)
+saveRDS(LISTfindspot, "../../data/large_data/LISTfindspot.rds")
 
 ```
+```{r}
+write_csv(origo, "../../data/origo_to_fix.CSV")
+```
+
+How many needs to be checked
+```{r}
+table(origo$origo_certainty)
+```
+
 

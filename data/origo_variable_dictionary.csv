@@ -1,0 +1,37 @@
+variable_name,variable_source,variable_type,variable_description
+edh_person_id,EDH People,character,"""id"" of the person in EDH People dataset"
+name,EDH People,character,fulll name of the person according EDH People
+praenomen,EDH People,character,praenomen of the person according EDH People
+nomen,EDH People,character,nomen of the person according EDH People
+cognomen,EDH People,character,cognomen of the person according EDH People
+supernomen,EDH People,character,supernomen of the person according EDH People
+gender,EDH People,character,gender of the person according EDH People
+age,EDH People,character,age of the person in years according EDH People
+tribus,EDH People,character,tribus of the person according EDH People
+status,EDH People,character,status of the person according EDH People
+religion,EDH People,character,religion of the person according EDH People
+occupation,EDH People,character,occupation of the person according EDH People
+edh_inscription_id,EDH,character,ID of the EDH inscription
+inscription_text,EDH/SDAM,character,cleaned text of the inscription
+inscription_type,EDH,character,"renamed ""type_of_inscription"""
+not_before,EDH,numeric,start date of the dating interval
+not_after,EDH,numeric,end date of the dating interval
+origo,EDH,character,place of origin of the person
+origo_clean,SDAM,character,cleaned string of the origo attribute
+auto_origo_geo,SDAM,boolean,if origo geocoding match obtained automatically
+origo_pleiades_id,PLEIADES,character,matched pleiades ID of the origo location
+origo_pleiades_name,PLEIADES,character,matched pleiades name of the origo location
+origo_certainty,SDAM,boolean,certainty of the manual geocoding match
+origo_geo_source_url,SDAM,character,data source of the origo geometry 
+origo_geometry,SDAM,character,"WKT-encoded, machine-readable point geometry representing the origo location"
+findspot_name,EDH,character,findspot of the inscription; cleaned by SDAM
+findspot_ancient,EDH,character,ancient name of the findspot of the inscription; cleaned by SDAM
+findspot_modern,EDH,character,modern name of the findspot of the inscription; cleaned by SDAM
+findspot_geometry,EDH,character,"WKT-encoded, machine-readable point geometry representing the findspot location"
+origo_line,SDAM,geometry,linestring connecting origo geometry and findspot geometry
+1BCE,SDAM,boolean,dating interval intersects with the 1st c. BCE
+1CE,SDAM,boolean,dating interval intersects with the 1st c. CE
+2CE,SDAM,boolean,dating interval intersects with the 2nd c. CE
+3CE,SDAM,boolean,dating interval intersects with the 3rd c. CE
+4CE,SDAM,boolean,dating interval intersects with the 4th c. CE
+5CE,SDAM,boolean,dating interval intersects with the  5th c. CE

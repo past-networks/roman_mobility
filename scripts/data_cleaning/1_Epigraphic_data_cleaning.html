@@ -7,7 +7,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 
 <meta name="author" content="Petra Heřmánková">
-<meta name="dcterms.date" content="2026-02-10">
+<meta name="dcterms.date" content="2026-02-11">
 
 <title>Roman Mobility Project - epigraphic data cleaning</title>
 <style>
@@ -21,6 +21,41 @@ ul.task-list li input[type="checkbox"] {
   width: 0.8em;
   margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
   vertical-align: middle;
+}
+/* CSS for syntax highlighting */
+html { -webkit-text-size-adjust: 100%; }
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+  { counter-reset: source-line 0; }
+pre.numberSource code > span
+  { position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+  { content: counter(source-line);
+    position: relative; left: -1em; text-align: right; vertical-align: baseline;
+    border: none; display: inline-block;
+    -webkit-touch-callout: none; -webkit-user-select: none;
+    -khtml-user-select: none; -moz-user-select: none;
+    -ms-user-select: none; user-select: none;
+    padding: 0 4px; width: 4em;
+  }
+pre.numberSource { margin-left: 3em;  padding-left: 4px; }
+div.sourceCode
+  {   }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
 }
 </style>
 
@@ -51,10 +86,12 @@ ul.task-list li input[type="checkbox"] {
     <h2 id="toc-title">Table of contents</h2>
    
   <ul>
-  <li><a href="#loading-data" id="toc-loading-data" class="nav-link active" data-scroll-target="#loading-data"><span class="header-section-number">1</span> Loading data</a>
+  <li><a href="#setup" id="toc-setup" class="nav-link active" data-scroll-target="#setup"><span class="header-section-number">1</span> Setup</a></li>
+  <li><a href="#loading-data" id="toc-loading-data" class="nav-link" data-scroll-target="#loading-data"><span class="header-section-number">2</span> Loading data</a>
   <ul class="collapse">
-  <li><a href="#edh-dataset" id="toc-edh-dataset" class="nav-link" data-scroll-target="#edh-dataset"><span class="header-section-number">1.1</span> EDH dataset</a></li>
-  <li><a href="#people-origo-dataset" id="toc-people-origo-dataset" class="nav-link" data-scroll-target="#people-origo-dataset"><span class="header-section-number">1.2</span> People (origo) dataset</a></li>
+  <li><a href="#edh-dataset" id="toc-edh-dataset" class="nav-link" data-scroll-target="#edh-dataset"><span class="header-section-number">2.1</span> EDH dataset</a></li>
+  <li><a href="#list-dataset" id="toc-list-dataset" class="nav-link" data-scroll-target="#list-dataset"><span class="header-section-number">2.2</span> LIST dataset</a></li>
+  <li><a href="#origo-dataset" id="toc-origo-dataset" class="nav-link" data-scroll-target="#origo-dataset"><span class="header-section-number">2.3</span> Origo dataset</a></li>
   </ul></li>
   </ul>
 </nav>
@@ -89,7 +126,7 @@ ul.task-list li input[type="checkbox"] {
     <div>
     <div class="quarto-title-meta-heading">Published</div>
     <div class="quarto-title-meta-contents">
-      <p class="date">February 10, 2026</p>
+      <p class="date">February 11, 2026</p>
     </div>
   </div>
   
@@ -101,15 +138,95 @@ ul.task-list li input[type="checkbox"] {
 </header>
 
 
-<section id="loading-data" class="level1" data-number="1">
-<h1 data-number="1"><span class="header-section-number">1</span> Loading data</h1>
-<section id="edh-dataset" class="level2" data-number="1.1">
-<h2 data-number="1.1" class="anchored" data-anchor-id="edh-dataset"><span class="header-section-number">1.1</span> EDH dataset</h2>
+<section id="setup" class="level1" data-number="1">
+<h1 data-number="1"><span class="header-section-number">1</span> Setup</h1>
+<div class="cell">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(tidyverse)</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(sf)</span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(mapview)</span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(leaflet)</span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(sfarrow)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</div>
+</section>
+<section id="loading-data" class="level1" data-number="2">
+<h1 data-number="2"><span class="header-section-number">2</span> Loading data</h1>
+<section id="edh-dataset" class="level2" data-number="2.1">
+<h2 data-number="2.1" class="anchored" data-anchor-id="edh-dataset"><span class="header-section-number">2.1</span> EDH dataset</h2>
 <p>Heřmánková, P., &amp; Kaše, V. (2022). EDH (2.0) [Data set]. Zenodo. <a href="https://doi.org/10.5281/zenodo.7303886" class="uri">https://doi.org/10.5281/zenodo.7303886</a></p>
 </section>
-<section id="people-origo-dataset" class="level2" data-number="1.2">
-<h2 data-number="1.2" class="anchored" data-anchor-id="people-origo-dataset"><span class="header-section-number">1.2</span> People (origo) dataset</h2>
-<p>Sobotkova, A., Heřmánková, P., &amp; Kaše, V. (2025). origo (v1.0) [Data set]. Zenodo. <a href="https://doi.org/10.5281/zenodo.14604222" class="uri">https://doi.org/10.5281/zenodo.14604222</a></p>
+<section id="list-dataset" class="level2" data-number="2.2">
+<h2 data-number="2.2" class="anchored" data-anchor-id="list-dataset"><span class="header-section-number">2.2</span> LIST dataset</h2>
+<p><strong>Vojtěch Kaše, Petra Heřmánková, &amp; Adéla Sobotková. (2024). LIST (v1.2) [Data set]. Zenodo.</strong> <a href="https://doi.org/10.5281/zenodo.10473706" class="uri">https://doi.org/10.5281/zenodo.10473706</a></p>
+<p>Dataset is on Zenodo, streamlined and spatial, published in January 2024, v1.2. Download the parquet manually (or explore <a href="https://rdrr.io/github/inbo/inborutils/src/R/download_zenodo.R" class="uri">https://rdrr.io/github/inbo/inborutils/src/R/download_zenodo.R</a>), review the metadata table, and then load the parquet with the help of <code>sfarrow</code> library into R. If something stops working in the scripts, consider uncommenting and loading earlier versions of the datasets as the scripts were developed with earlier versions of the dataset.</p>
+<div class="cell">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb2"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="co"># LIST from https://zenodo.org/records/10473706 (9 Jan 2024, v1.2)</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a> LIST <span class="ot">&lt;-</span> <span class="fu">st_read_parquet</span>(<span class="st">"../../data/large_data/LIST_v1-2.parquet"</span>) <span class="co"># people need unnesting </span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</div>
+</section>
+<section id="origo-dataset" class="level2" data-number="2.3">
+<h2 data-number="2.3" class="anchored" data-anchor-id="origo-dataset"><span class="header-section-number">2.3</span> Origo dataset</h2>
+<p><strong>Sobotkova, A., Heřmánková, P., &amp; Kaše, V. (2025). origo (v1.0) [Data set]. Zenodo.</strong> <a href="https://doi.org/10.5281/zenodo.14604222" class="uri">https://doi.org/10.5281/zenodo.14604222</a></p>
+<p>In 2024, a dataset was generated with 2313 people with origo, which differs in that in addition to georeferenced <code>origo_geometry</code> and <code>findspot_geometry</code> (birth and deathplace), and personal attributes, it also contains information from inscription pertaining to findspot name (ancient and modern), chronological date, and inscription type data. The active geometry here is the linestring connecting the two point geometries.</p>
+<div class="cell">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb3"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="co"># load 2024 origo from parquet</span></span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>origo <span class="ot">&lt;-</span> <span class="fu">st_read_parquet</span>(<span class="st">"../../data/origo_geo.parquet"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</div>
+<p>The <code>origo</code> dataset alone has no information about the migrating person and needs to be connected with either LIRE or LIST data in order to inspect the journey in light of the monument attributes as type of material, type of inscription, etc. (gender, status, age, etc. come later in the People section)</p>
+<div class="cell">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb4"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Grab inscriptions from LIST for people who mention origo so you have inscription full attributes</span></span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>LISTfindspot <span class="ot">&lt;-</span> LIST <span class="sc">%&gt;%</span> </span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">filter</span>(EDH.ID <span class="sc">%in%</span> origo<span class="sc">$</span>edh_inscription_id) <span class="sc">%&gt;%</span>  <span class="co"># 1919 MATCHES</span></span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">select</span>(<span class="fu">matches</span>(<span class="st">"EDH.ID|LIST|findspot|Lat|Long|^status|province"</span>)) <span class="sc">%&gt;%</span> </span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>  <span class="fu">select</span>(<span class="sc">-</span><span class="fu">matches</span>(<span class="st">"certainty"</span>)) <span class="sc">%&gt;%</span> </span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a>  <span class="fu">relocate</span>(<span class="fu">c</span>(status,status_notation), <span class="at">.after =</span> Latitude)</span>
+<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a><span class="fu">colnames</span>(LISTfindspot)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code> [1] "LIST.ID"                "EDH.ID"                 "province"              
+ [4] "province_label_clean"   "findspot_ancient_clean" "findspot_modern_clean" 
+ [7] "findspot_clean"         "Longitude"              "Latitude"              
+[10] "status"                 "status_notation"        "geometry"              </code></pre>
+</div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb6"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="fu">glimpse</span>(LISTfindspot)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>Rows: 1,919
+Columns: 12
+$ LIST.ID                &lt;int&gt; 445511, 445531, 445539, 445540, 445572, 445575,…
+$ EDH.ID                 &lt;chr&gt; "HD048602", "HD048601", "HD064259", "HD004402",…
+$ province               &lt;chr&gt; "Achaia", "Achaia", "Achaia", "Achaia", "Achaia…
+$ province_label_clean   &lt;chr&gt; "Achaia", "Achaia", "Achaia", "Achaia", "Achaia…
+$ findspot_ancient_clean &lt;chr&gt; "Athenae", "Athenae", "Athenae", "Athenae", "At…
+$ findspot_modern_clean  &lt;chr&gt; "Athínai", "Athínai", "Athínai", "Athínai", "At…
+$ findspot_clean         &lt;chr&gt; "NULL", "Kerameikos", "NULL", "Kerameikos bei K…
+$ Longitude              &lt;dbl&gt; 23.72798, 23.71660, 23.72798, 23.71660, 23.7279…
+$ Latitude               &lt;dbl&gt; 37.98415, 37.98320, 37.98415, 37.98320, 37.9841…
+$ status                 &lt;chr&gt; "milites;  tituli sepulcrales;  tria nomina;  v…
+$ status_notation        &lt;chr&gt; "milites, tria nomina, viri", "milites, tria no…
+$ geometry               &lt;POINT&gt; POINT (23.72798 37.98415), POINT (23.7166 37.…</code></pre>
+</div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb8"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="fu">saveRDS</span>(LISTfindspot, <span class="st">"../../data/large_data/LISTfindspot.rds"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</div>
+<div class="cell">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb9"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="fu">write_csv</span>(origo, <span class="st">"../../data/origo_to_fix.CSV"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</div>
+<p>How many needs to be checked</p>
+<div class="cell">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb10"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="fu">table</span>(origo<span class="sc">$</span>origo_certainty)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>
+                                          certain 
+                                             1760 
+          uncertain (another good variant exists) 
+                                              289 
+uncertain (name could be interpreted differently) 
+                                              150 
+             uncertainty is in the latlong source 
+                                                7 
+                                       wild guess 
+                                              106 </code></pre>
+</div>
+</div>
 </section>
 </section>
 
