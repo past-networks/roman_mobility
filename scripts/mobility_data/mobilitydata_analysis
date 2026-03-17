@@ -1,0 +1,911 @@
+---
+title: "mobility data analysis"
+output: html_document
+date: "2026-03-17"
+---
+# Examining the data, shape, and network creation of the 10 most used routes
+# with origin and findspots (even the same city) as separate nodes.
+
+```{r packages}
+library(arrow)        # Reading parquet files
+library(readr)        # Reading CSV files
+library(dplyr)        # Data manipulation
+library(igraph)       # Network graph creation and analysis
+library(ggplot2)      # Static plotting
+library(tidyr)        # Data reshaping
+library(sf)           # Spatial data handling (simple features)
+library(tmap)         # Interactive and static map visualisation
+library(cluster)      # Hierarchical clustering
+library(tidyverse)    # Core tidyverse (includes ggplot2, dplyr, tidyr etc.)
+library(dggridR)      # Discrete global hexagon grids
+library(RColorBrewer) # Colour palettes
+```
+
+```{r load data}
+# Load the variable dictionary explaining each column in the dataset
+dictionary <- read.csv("../origo_variable_dictionary.csv")
+
+# Load the main mobility dataset (parquet format for efficiency)
+origo_data <- read_parquet("../origo_geo.parquet")
+
+# Load Roman province boundaries and transform to WGS84 (EPSG:4326) for mapping
+# NOTE: 4326 is used as the base CRS throughout; 3035 is applied locally for metric operations
+provinces <- st_read("../roman_province_boundaries.json") %>%
+  st_transform(4326)
+
+# Convert origo (origin) geometry column from WKT to sf spatial object
+origo_sf <- origo_data %>%
+  filter(!is.na(origo_geometry)) %>%
+  st_as_sf(wkt = "origo_geometry", crs = 4326)
+
+# Convert findspot geometry column from WKT to sf spatial object
+findspot_sf <- origo_data %>%
+  filter(!is.na(findspot_geometry)) %>%
+  st_as_sf(wkt = "findspot_geometry", crs = 4326)
+```
+
+```{r data overview}
+# Dimensions and overall structure of the dataset
+dim(origo_data)
+str(origo_data)
+
+# All column names
+colnames(origo_data)
+
+# Preview and completeness check: origo (origin) geometry
+head(origo_data$origo_geometry, 10)
+class(origo_data$origo_geometry)
+sum(!is.na(origo_data$origo_geometry))
+
+# Preview and completeness check: findspot geometry
+head(origo_data$findspot_geometry, 10)
+sum(!is.na(origo_data$findspot_geometry))
+
+# Preview and completeness check: origo line (connection between origin and findspot)
+head(origo_data$origo_line, 10)
+sum(!is.na(origo_data$origo_line))
+
+# Count unique places
+length(unique(origo_data$findspot_ancient))  # Number of unique findspot locations
+length(unique(origo_data$origo_clean))       # Number of unique origin locations
+
+# Dating range summary
+summary(origo_data$not_before)
+summary(origo_data$not_after)
+
+# Distribution across centuries
+table(origo_data$`1BCE`, useNA = "always")
+table(origo_data$`1CE`,  useNA = "always")
+table(origo_data$`2CE`,  useNA = "always")
+table(origo_data$`3CE`,  useNA = "always")
+table(origo_data$`4CE`,  useNA = "always")
+table(origo_data$`5CE`,  useNA = "always")
+
+# Demographic attributes
+table(origo_data$gender,     useNA = "always")
+table(origo_data$status,     useNA = "always")
+head(origo_data$name, 30)
+
+# Occupations and inscription types
+table(origo_data$occupation,       useNA = "always")
+table(origo_data$inscription_type, useNA = "always")
+```
+
+```{r top 10 routes network}
+# Filter to rows with both geometries present and resolve best available place names
+migrants <- origo_data %>%
+  filter(!is.na(origo_geometry) & !is.na(findspot_geometry)) %>%
+  mutate(
+    origin_name   = coalesce(origo_pleiades_name, origo_clean, origo),
+    findspot_name = coalesce(findspot_ancient, findspot_modern, findspot_name)
+  ) %>%
+  filter(!is.na(origin_name) & !is.na(findspot_name))
+
+# Check how many valid migration records we have
+nrow(migrants)
+
+# Count people per route, excluding same-place moves (self-loops)
+top_pairs <- migrants %>%
+  filter(origin_name != findspot_name) %>%
+  group_by(origin_name, findspot_name) %>%
+  summarise(
+    num_people = n(),
+    person_ids = paste(edh_person_id, collapse = ", "),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(num_people)) %>%
+  head(10)
+
+print(top_pairs %>% select(origin_name, findspot_name, num_people))
+
+# Collect all unique locations appearing in the top 10 routes
+top_origins    <- unique(top_pairs$origin_name)
+top_findspots  <- unique(top_pairs$findspot_name)
+all_top_locations <- unique(c(top_origins, top_findspots))
+
+# Calculate emigrant counts per origin
+emigrants <- top_pairs %>%
+  group_by(origin_name) %>%
+  summarise(emigrants = sum(num_people))
+
+# Calculate immigrant counts per destination
+immigrants <- top_pairs %>%
+  group_by(findspot_name) %>%
+  summarise(immigrants = sum(num_people))
+
+# Build node table with role classification (Source / Destination / Both)
+nodes <- data.frame(name = all_top_locations, stringsAsFactors = FALSE) %>%
+  left_join(emigrants,  by = c("name" = "origin_name")) %>%
+  left_join(immigrants, by = c("name" = "findspot_name")) %>%
+  mutate(
+    emigrants     = ifelse(is.na(emigrants),  0, emigrants),
+    immigrants    = ifelse(is.na(immigrants), 0, immigrants),
+    total_traffic = emigrants + immigrants,
+    role = case_when(
+      emigrants > 0 & immigrants == 0 ~ "Source only",
+      immigrants > 0 & emigrants == 0 ~ "Destination only",
+      TRUE                            ~ "Both"
+    )
+  ) %>%
+  arrange(desc(total_traffic))
+
+print(nodes)
+
+# Build directed network graph from top pairs
+network <- graph_from_data_frame(
+  d        = top_pairs %>% select(from = origin_name, to = findspot_name, weight = num_people),
+  directed = TRUE,
+  vertices = nodes
+)
+
+# Network visualisation: Fruchterman-Reingold layout
+png("top10_pairs_improved.png", width = 3000, height = 2400, res = 300)
+par(mar = c(1, 1, 3, 1))
+
+set.seed(123)
+layout_fr <- layout_with_fr(network)  # Force-directed layout for organic spacing
+
+# Node sizes scaled by total traffic
+V(network)$size <- sqrt(V(network)$total_traffic) * 2
+
+# Edge width proportional to number of people (log-scaled to avoid dominance)
+E(network)$width <- log1p(E(network)$weight) * 1.5
+
+# Assign a distinct colour to each of the 10 edges
+edge_colors <- colorRampPalette(brewer.pal(9, "Set1"))(10)
+E(network)$color <- adjustcolor(edge_colors, alpha.f = 0.7)
+
+# Colour nodes by their role
+node_colors <- c("Source only" = "#4292C6", "Destination only" = "#E31A1C", "Both" = "#74C476")
+V(network)$color <- adjustcolor(node_colors[V(network)$role], alpha.f = 0.9)
+
+plot(network,
+     layout             = layout_fr,
+     vertex.label       = V(network)$name,
+     vertex.label.cex   = 0.9,
+     vertex.label.color = "black",
+     vertex.label.font  = 2,
+     vertex.label.dist  = 1.5,
+     vertex.frame.color = "white",
+     vertex.frame.width = 2,
+     edge.curved        = 0.2,
+     edge.arrow.size    = 0.7,
+     edge.arrow.width   = 1.5,
+     main = "Top 10 Migration Routes\n(Each route has unique color)")
+
+legend("bottomleft",
+       legend = c("Source Only", "Destination Only", "Both Origin & Destination"),
+       col    = node_colors,
+       pch    = 19,
+       pt.cex = 2,
+       cex    = 0.8,
+       title  = "Location Roles",
+       bty    = "n")
+
+dev.off()
+
+# Bar chart of top 10 routes
+top_pairs_plot <- top_pairs %>%
+  mutate(
+    route_short = paste(substr(origin_name, 1, 15), "→", substr(findspot_name, 1, 15))
+  )
+
+ggplot(top_pairs_plot, aes(x = reorder(route_short, num_people), y = num_people)) +
+  geom_col(aes(fill = num_people), alpha = 0.8, width = 0.7) +
+  geom_text(aes(label = num_people), hjust = -0.3, size = 4.5, fontface = "bold") +
+  scale_fill_gradientn(colors = c("#FED976", "#FD8D3C", "#E31A1C")) +
+  coord_flip() +
+  labs(title    = "Top 10 Migration Routes by Number of People",
+       subtitle = "Routes with same origin/destination excluded",
+       x = NULL,
+       y = "Number of People",
+       fill = "People") +
+  theme_minimal() +
+  theme(legend.position  = "none",
+        axis.text.y      = element_text(size = 10, face = "bold"),
+        plot.title       = element_text(size = 15, face = "bold"),
+        plot.subtitle    = element_text(size = 11))
+
+ggsave("top10_pairs_bar_clean.png", width = 11, height = 8, dpi = 300)
+
+# Individual route cards: one mini-arrow plot per route
+png("top10_routes_detail.png", width = 3000, height = 2000, res = 300)
+par(mfrow = c(2, 5), mar = c(2, 2, 3, 1))
+
+for (i in 1:10) {
+  route <- top_pairs[i, ]
+
+  plot(c(0, 1), c(0, 1), type = "n", axes = FALSE, xlab = "", ylab = "",
+       main = paste0("#", i, ": ", route$num_people, " people"))
+
+  # Draw directional arrow from origin to destination
+  arrows(x0 = 0.15, y0 = 0.5, x1 = 0.85, y1 = 0.5,
+         length = 0.15, lwd = 3, col = edge_colors[i])
+
+  # Label origin and destination
+  text(0.1, 0.5, route$origin_name,   adj = 1, cex = 0.8, font = 2)
+  text(0.9, 0.5, route$findspot_name, adj = 0, cex = 0.8, font = 2)
+}
+
+dev.off()
+
+# Self-loop check: people inscribed in same place as origin
+self_loops <- migrants %>%
+  filter(origin_name == findspot_name) %>%
+  group_by(origin_name) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count))
+
+if (nrow(self_loops) > 0) {
+  cat("Found", nrow(self_loops), "locations with self-loops (same origin and findspot):\n")
+  print(head(self_loops, 10))
+  cat("\nThese are EXCLUDED from the top 10 pairs analysis.\n")
+} else {
+  cat("No self-loops found.\n")
+}
+
+# Bidirectional route check: are any top routes travelled both ways?
+bidirectional <- top_pairs %>%
+  inner_join(
+    top_pairs,
+    by     = c("origin_name" = "findspot_name", "findspot_name" = "origin_name"),
+    suffix = c("_forward", "_backward")
+  ) %>%
+  filter(origin_name < findspot_name) %>%
+  select(location_A = origin_name,
+         location_B = findspot_name,
+         A_to_B     = num_people_forward,
+         B_to_A     = num_people_backward) %>%
+  mutate(total = A_to_B + B_to_A)
+
+if (nrow(bidirectional) > 0) {
+  cat("Found", nrow(bidirectional), "bidirectional route(s):\n")
+  print(bidirectional)
+} else {
+  cat("No bidirectional routes in top 10 (all routes are one-directional).\n")
+}
+```
+
+```{r top 10 routes hierarchical network}
+# Rebuild network (origins left, destinations right, mixed in centre)
+network <- graph_from_data_frame(
+  d        = top_pairs %>% select(from = origin_name, to = findspot_name, weight = num_people),
+  directed = TRUE,
+  vertices = nodes
+)
+
+png("top10_pairs_hierarchical.png", width = 3600, height = 3000, res = 300)
+par(mar = c(1, 1, 3, 1))
+
+# Separate nodes by role for manual column layout
+source_only <- nodes$name[nodes$role == "Source only"]
+dest_only   <- nodes$name[nodes$role == "Destination only"]
+both        <- nodes$name[nodes$role == "Both"]
+
+# Assign x/y positions: sources left (x=0), mixed centre (x=5), destinations right (x=10)
+n_nodes       <- vcount(network)
+custom_layout <- matrix(0, nrow = n_nodes, ncol = 2)
+
+for (i in 1:n_nodes) {
+  node_name <- V(network)$name[i]
+
+  if (node_name %in% source_only) {
+    custom_layout[i, 1] <- 0
+    custom_layout[i, 2] <- which(source_only == node_name) * 2
+  } else if (node_name %in% dest_only) {
+    custom_layout[i, 1] <- 10
+    custom_layout[i, 2] <- which(dest_only == node_name) * 1.5
+  } else {
+    custom_layout[i, 1] <- 5
+    custom_layout[i, 2] <- which(both == node_name) * 3
+  }
+}
+
+plot(network,
+     layout             = custom_layout,
+     vertex.label       = V(network)$name,
+     vertex.label.cex   = 1.0,
+     vertex.label.color = "black",
+     vertex.label.font  = 2,
+     vertex.label.dist  = 1.5,
+     vertex.size        = sqrt(V(network)$total_traffic) * 2.5,
+     vertex.color       = adjustcolor(node_colors[V(network)$role], alpha.f = 0.95),
+     vertex.frame.color = "white",
+     vertex.frame.width = 3,
+     edge.curved        = 0.15,
+     edge.width         = log1p(E(network)$weight) * 2,
+     edge.color         = adjustcolor(edge_colors, alpha.f = 0.7),
+     edge.arrow.size    = 1.0,
+     edge.arrow.width   = 2,
+     main = "Top 10 Migration Routes\n(Hierarchical: Sources → Destinations)")
+
+# Column dividers and labels
+abline(v = c(0, 5, 10), lty = 2, col = "gray80")
+text(0,  max(custom_layout[, 2]) + 1, "SOURCES",      cex = 1.2, font = 2)
+text(5,  max(custom_layout[, 2]) + 1, "BOTH",         cex = 1.2, font = 2)
+text(10, max(custom_layout[, 2]) + 1, "DESTINATIONS", cex = 1.2, font = 2)
+
+dev.off()
+
+# Grid of individual route arrows
+png("top10_pairs_grid.png", width = 3600, height = 2400, res = 300)
+par(mfrow = c(2, 5), mar = c(3, 2, 3, 2))
+
+for (i in 1:10) {
+  route <- top_pairs[i, ]
+
+  plot(c(0, 1), c(0, 1), type = "n", axes = FALSE, xlab = "", ylab = "",
+       main     = paste0("#", i, ": ", route$num_people, " people\n",
+                         substr(route$origin_name,   1, 20), " → ",
+                         substr(route$findspot_name, 1, 20)),
+       cex.main = 0.9)
+
+  arrows(x0 = 0.2, y0 = 0.5, x1 = 0.8, y1 = 0.5,
+         length = 0.2, lwd = 5, col = edge_colors[i])
+
+  # Origin label in blue, destination in red
+  text(0.1, 0.5, route$origin_name,   adj = c(1, 0.5), cex = 0.9, font = 2, col = "#4292C6")
+  text(0.9, 0.5, route$findspot_name, adj = c(0, 0.5), cex = 0.9, font = 2, col = "#E31A1C")
+
+  # Person count centred above the arrow
+  text(0.5, 0.7, paste(route$num_people, "people"), cex = 1.1, font = 2)
+}
+
+dev.off()
+```
+
+# Hexagon grid of both origin and destination places. Number of people per cell determines the colour.
+
+```{r hexagons origo res 12}
+# Build hexagon grid over origin places at resolution 12 (~96 km² per cell)
+dggs_12 <- dgconstruct(res = 12, metric = TRUE, resround = "nearest")
+
+# Assign each origin point to its hexagonal cell
+coords_12        <- st_coordinates(origo_sf)
+origo_sf$cell_12 <- dgGEO_to_SEQNUM(dggs_12, coords_12[, 1], coords_12[, 2])$seqnum
+
+# Count how many points fall into each cell
+cell_counts_12 <- origo_sf %>%
+  st_drop_geometry() %>%
+  count(cell_12, name = "n_points")
+
+# Build the hex grid polygons and assign CRS
+hex_grid_12 <- dgcellstogrid(dggs_12, cell_counts_12$cell_12) %>%
+  st_as_sf()
+st_crs(hex_grid_12) <- 4326
+
+# Join point counts onto the hex grid
+hex_grid_12 <- merge(hex_grid_12, cell_counts_12, by.x = "seqnum", by.y = "cell_12")
+
+# Visualise interactively
+tmap_mode("view")
+
+map_origo_12 <- tm_shape(provinces) +
+  tm_polygons(fill = "grey95", col = "white", fill_alpha = 0.5) +
+
+  tm_shape(hex_grid_12) +
+  tm_polygons(
+    fill       = "n_points",
+    fill.scale = tm_scale_continuous(values = "plasma"),
+    fill_alpha = 0.7,
+    col        = "white",
+    lwd        = 0.3,
+    id         = "seqnum",
+    popup.vars = c("Cell ID" = "seqnum", "Points" = "n_points")
+  ) +
+
+  tm_shape(origo_sf) +
+  tm_dots(fill = "black", size = 0.05, alpha = 0.5) +
+
+  tm_view(set_zoom_limits = c(3, 10))
+
+print(map_origo_12)
+```
+
+```{r hexagons origo res 13}
+# Build hexagon grid over origin places at resolution 13 (~31 km² per cell)
+dggs_13 <- dgconstruct(res = 13, metric = TRUE, resround = "nearest")
+
+# Assign each origin point to its hexagonal cell
+coords_13        <- st_coordinates(origo_sf)
+origo_sf$cell_13 <- dgGEO_to_SEQNUM(dggs_13, coords_13[, 1], coords_13[, 2])$seqnum
+
+# Count how many points fall into each cell
+cell_counts_13 <- origo_sf %>%
+  st_drop_geometry() %>%
+  count(cell_13, name = "n_points")
+
+# Build the hex grid polygons and assign CRS
+hex_grid_13 <- dgcellstogrid(dggs_13, cell_counts_13$cell_13) %>%
+  st_as_sf()
+st_crs(hex_grid_13) <- 4326
+
+# Join point counts onto the hex grid
+hex_grid_13 <- merge(hex_grid_13, cell_counts_13, by.x = "seqnum", by.y = "cell_13")
+
+# Visualise interactively
+tmap_mode("view")
+
+map_origo_13 <- tm_shape(provinces) +
+  tm_polygons(fill = "grey95", col = "white", fill_alpha = 0.5) +
+
+  tm_shape(hex_grid_13) +
+  tm_polygons(
+    fill       = "n_points",
+    fill.scale = tm_scale_continuous(values = "plasma"),
+    fill_alpha = 0.7,
+    col        = "white",
+    lwd        = 0.3,
+    id         = "seqnum",
+    popup.vars = c("Cell ID" = "seqnum", "Points" = "n_points")
+  ) +
+
+  tm_shape(origo_sf) +
+  tm_dots(fill = "black", size = 0.05, alpha = 0.5) +
+
+  tm_view(set_zoom_limits = c(3, 10))
+
+print(map_origo_13)
+```
+
+```{r hexagons findspot res 12}
+# Build hexagon grid over findspot places at resolution 12 (~96 km² per cell)
+dggs_12 <- dgconstruct(res = 12, metric = TRUE, resround = "nearest")
+
+# Assign each findspot point to its hexagonal cell
+coords_12           <- st_coordinates(findspot_sf)
+findspot_sf$cell_12 <- dgGEO_to_SEQNUM(dggs_12, coords_12[, 1], coords_12[, 2])$seqnum
+
+# Count how many points fall into each cell
+cell_counts_12 <- findspot_sf %>%
+  st_drop_geometry() %>%
+  count(cell_12, name = "n_points")
+
+# Build the hex grid polygons and assign CRS
+hex_grid_12 <- dgcellstogrid(dggs_12, cell_counts_12$cell_12) %>%
+  st_as_sf()
+st_crs(hex_grid_12) <- 4326
+
+# Join point counts onto the hex grid
+hex_grid_12 <- merge(hex_grid_12, cell_counts_12, by.x = "seqnum", by.y = "cell_12")
+
+# Visualise interactively
+tmap_mode("view")
+
+map_find_12 <- tm_shape(provinces) +
+  tm_polygons(fill = "grey95", col = "white", fill_alpha = 0.5) +
+
+  tm_shape(hex_grid_12) +
+  tm_polygons(
+    fill       = "n_points",
+    fill.scale = tm_scale_continuous(values = "plasma"),
+    fill_alpha = 0.7,
+    col        = "white",
+    lwd        = 0.3,
+    id         = "seqnum",
+    popup.vars = c("Cell ID" = "seqnum", "Points" = "n_points")
+  ) +
+
+  tm_shape(findspot_sf) +
+  tm_dots(fill = "black", size = 0.05, alpha = 0.5) +
+
+  tm_view(set_zoom_limits = c(3, 10))
+
+print(map_find_12)
+```
+
+```{r hexagons findspot res 13}
+# Build hexagon grid over findspot places at resolution 13 (~31 km² per cell)
+dggs_13 <- dgconstruct(res = 13, metric = TRUE, resround = "nearest")
+
+# Assign each findspot point to its hexagonal cell
+coords_13           <- st_coordinates(findspot_sf)
+findspot_sf$cell_13 <- dgGEO_to_SEQNUM(dggs_13, coords_13[, 1], coords_13[, 2])$seqnum
+
+# Count how many points fall into each cell
+cell_counts_13 <- findspot_sf %>%
+  st_drop_geometry() %>%
+  count(cell_13, name = "n_points")
+
+# Build the hex grid polygons and assign CRS
+hex_grid_13 <- dgcellstogrid(dggs_13, cell_counts_13$cell_13) %>%
+  st_as_sf()
+st_crs(hex_grid_13) <- 4326
+
+# Join point counts onto the hex grid
+hex_grid_13 <- merge(hex_grid_13, cell_counts_13, by.x = "seqnum", by.y = "cell_13")
+
+# Visualise interactively
+tmap_mode("view")
+
+map_find_13 <- tm_shape(provinces) +
+  tm_polygons(fill = "grey95", col = "white", fill_alpha = 0.5) +
+
+  tm_shape(hex_grid_13) +
+  tm_polygons(
+    fill       = "n_points",
+    fill.scale = tm_scale_continuous(values = "plasma"),
+    fill_alpha = 0.7,
+    col        = "white",
+    lwd        = 0.3,
+    id         = "seqnum",
+    popup.vars = c("Cell ID" = "seqnum", "Points" = "n_points")
+  ) +
+
+  tm_shape(findspot_sf) +
+  tm_dots(fill = "black", size = 0.05, alpha = 0.5) +
+
+  tm_view(set_zoom_limits = c(3, 10))
+
+print(map_find_13)
+```
+
+# Network visualisation of mobility projected onto the map. Red points are destinations, blue are origins. The network is unidirectional.
+
+```{r network on map styled}
+# Filter to rows where both geometries are present
+network_clean <- origo_data %>%
+  filter(!is.na(origo_geometry), !is.na(findspot_geometry))
+
+# Aggregate to top 30 routes by traveller count
+top_30_routes <- network_clean %>%
+  group_by(origo_clean, findspot_ancient) %>%
+  summarise(
+    traveler_count    = n(),
+    origo_geometry    = first(origo_geometry),
+    findspot_geometry = first(findspot_geometry),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(traveler_count)) %>%
+  slice(1:30)
+
+# Build line geometries connecting each origin–destination pair
+top_30_lines <- st_sf(
+  top_30_routes %>% select(origo_clean, findspot_ancient, traveler_count),
+  geometry = purrr::map2(
+    top_30_routes$origo_geometry,
+    top_30_routes$findspot_geometry,
+    ~ st_linestring(rbind(
+      st_coordinates(st_as_sfc(.x, crs = 4326)[])[1, 1:2],[3]
+      st_coordinates(st_as_sfc(.y, crs = 4326)[])[1, 1:2][3]
+    ))
+  ) %>% st_sfc(crs = 4326)
+)
+
+# One point per unique origin location (aggregated traveller count)
+origo_pts <- st_as_sf(
+  top_30_routes %>%
+    filter(!is.na(origo_geometry)) %>%
+    mutate(origo_clean = replace_na(origo_clean, "Unknown")) %>%
+    group_by(origo_clean, origo_geometry) %>%
+    summarise(traveler_count = sum(traveler_count), .groups = "drop"),
+  wkt = "origo_geometry",
+  crs = 4326
+)
+
+# One point per unique findspot location (aggregated traveller count)
+findspot_pts <- st_as_sf(
+  top_30_routes %>%
+    filter(!is.na(findspot_geometry)) %>%
+    mutate(findspot_ancient = replace_na(findspot_ancient, "Unknown")) %>%
+    group_by(findspot_ancient, findspot_geometry) %>%
+    summarise(traveler_count = sum(traveler_count), .groups = "drop"),
+  wkt = "findspot_geometry",
+  crs = 4326
+)
+
+# Visualise: provinces base, route lines, origin dots (blue), destination dots (red)
+tmap_mode("view")
+
+map_viz <- tm_shape(provinces) +
+  tm_polygons(fill = "grey95", col = "white", fill_alpha = 0.5) +
+
+  tm_shape(top_30_lines) +
+  tm_lines(
+    col        = "grey50",
+    lwd        = 1,
+    alpha      = 0.6,
+    id         = "origo_clean",
+    popup.vars = c("From"  = "origo_clean",
+                   "To"    = "findspot_ancient",
+                   "Count" = "traveler_count")
+  ) +
+
+  tm_shape(origo_pts) +
+  tm_dots(fill = "#4292C6", size = 0.4, id = "origo_clean") +
+
+  tm_shape(findspot_pts) +
+  tm_dots(fill = "#E31A1C", size = 0.4, id = "findspot_ancient") +
+
+  tm_view(set_zoom_limits = c(3, 10))
+
+map_viz
+```
+
+# Network with geometry lines for the map - simple uniform visualisation.
+
+```{r network on map simple}
+# Filter to valid movements (both geometries present)
+network_raw <- origo_data %>%
+  filter(!is.na(origo_geometry), !is.na(findspot_geometry))
+
+# Summarise top 30 routes and keep one geometry example per route for inspection
+route_summary <- network_raw %>%
+  group_by(origo_clean, findspot_ancient) %>%
+  summarise(
+    traveler_count    = n(),
+    origo_geom_raw    = first(origo_geometry),
+    findspot_geom_raw = first(findspot_geometry),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(traveler_count)) %>%
+  slice(1:30)
+
+# Inspect the top 30 routes
+print(route_summary)
+
+# Save summary for reporting
+write.csv(route_summary,
+          "../top_30_mobility_routes.csv",
+          row.names = FALSE)
+
+# Extract geometry columns as sfc objects (vectorised, faster than row-by-row)
+origo_sfc    <- st_as_sfc(route_summary$origo_geom_raw,    crs = 4326)
+findspot_sfc <- st_as_sfc(route_summary$findspot_geom_raw, crs = 4326)
+
+# Build straight lines between each origin–destination pair
+mobility_lines <- purrr::map2(origo_sfc, findspot_sfc,
+                               ~ st_linestring(rbind(.x, .y))) %>%
+  st_sfc(crs = 4326)
+
+# Attach line geometry to the route summary table
+top_30_sf <- st_sf(route_summary, geometry = mobility_lines)
+
+# Simple visualisation: uniform red lines, no size scaling
+tmap_mode("view")
+
+map_raw_network <- tm_shape(provinces) +
+  tm_polygons(fill = "grey90", col = "white", fill_alpha = 0.5) +
+
+  tm_shape(top_30_sf) +
+  tm_lines(
+    col        = "firebrick",
+    lwd        = 2,
+    alpha      = 0.8,
+    id         = "origo_clean",
+    popup.vars = c("From"       = "origo_clean",
+                   "To"         = "findspot_ancient",
+                   "Count"      = "traveler_count",
+                   "Start_Geom" = "origo_geom_raw",
+                   "End_Geom"   = "findspot_geom_raw")
+  )
+
+map_raw_network
+```
+
+# Buffers around each origin spot (5 km) to examine overlapping origin places. Can be used to decide whether to cluster nearby sites.
+
+```{r top origin places}
+# Count and rank the most frequent origin places
+top_places <- origo_sf %>%
+  st_drop_geometry() %>%
+  count(origo_clean, sort = TRUE)
+
+# Show the top 20 most frequent origins
+head(top_places, 20)
+```
+
+```{r buffer and clusters}
+# Project to ETRS89-LAEA (EPSG:3035) - metric CRS required for distance-based operations
+origo_metric <- st_transform(origo_sf, 3035)
+
+# Generate 5 km buffers around each origin point
+origo_buffers <- st_buffer(origo_metric, dist = 5000)
+
+# Compute pairwise distance matrix between all origin points (in metres)
+dist_matrix <- st_distance(origo_metric)
+
+# Hierarchical clustering with complete linkage (prevents chaining within clusters)
+# Complete linkage: no two points in the same cluster are more than 10 km apart
+hc_results         <- hclust(as.dist(dist_matrix), method = "complete")
+cluster_assignments <- as.factor(cutree(hc_results, h = 10000))
+
+# Attach cluster IDs to both point and buffer objects
+origo_sf$cluster_id      <- cluster_assignments
+origo_buffers$cluster_id <- cluster_assignments
+
+# Transform provinces to metric CRS for spatial consistency in this chunk
+provinces_metric <- st_transform(provinces, 3035)
+
+# Visualise buffers and clustered points
+tmap_mode("view")
+
+map_viz <- tm_shape(provinces_metric) +
+  tm_polygons(fill = "grey90", col = "white", fill_alpha = 0.5) +
+
+  # Colour-coded buffers by cluster
+  tm_shape(origo_buffers) +
+  tm_polygons(fill          = "cluster_id",
+              fill_alpha    = 0.3,
+              col           = "cluster_id",
+              fill.legend   = tm_legend_hide(),
+              col.legend    = tm_legend_hide()) +
+
+  # Individual origin points with popup info
+  tm_shape(origo_sf) +
+  tm_dots(fill       = "black",
+          size       = 0.01,
+          popup.vars = c("edh_person_id", "edh_inscription_id",
+                         "name", "cluster_id", "origo_clean")) +
+
+  tm_view(set_zoom_limits = c(4, 12))
+
+map_viz
+
+# Export cluster assignments for further analysis
+cluster_export <- origo_sf %>%
+  st_drop_geometry() %>%
+  select(edh_person_id, edh_inscription_id, cluster_id, origo_clean)
+
+write.csv(cluster_export,
+          "../origo_clusters_assigned.csv",
+          row.names = FALSE)
+```
+
+```{r examine cluster data}
+# Load previously saved cluster assignments
+cluster <- read.csv("../origo_clusters_assigned.csv")
+
+# Total number of unique clusters
+num_clusters <- nlevels(origo_sf$cluster_id)
+print(paste("Total number of clusters:", num_clusters))
+
+# Distribution of points across clusters
+table(origo_sf$cluster_id)
+
+# Top 10 largest clusters
+head(sort(table(origo_sf$cluster_id), decreasing = TRUE), 10)
+```
+
+```{r dual resolution clustering}
+# Filter to rows with valid origin geometry and convert to sf
+origo_clean_data <- origo_data %>%
+  filter(!is.na(origo_geometry))
+
+origo_sf     <- st_as_sf(origo_clean_data, wkt = "origo_geometry", crs = 4326)
+origo_metric <- st_transform(origo_sf, 3035)
+
+# Compute distance matrix and run hierarchical clustering once
+dist_matrix <- st_distance(origo_metric)
+hc_results  <- hclust(as.dist(dist_matrix), method = "complete")
+
+# Cut the dendrogram at two thresholds for comparison
+origo_sf$cluster_id_10km <- as.factor(cutree(hc_results, h = 10000))  # Fine: 10 km
+origo_sf$cluster_id_50km <- as.factor(cutree(hc_results, h = 50000))  # Coarse: 50 km
+
+# Copy cluster IDs to the metric object so they survive the jitter transform
+origo_metric$cluster_id_10km <- origo_sf$cluster_id_10km
+origo_metric$cluster_id_50km <- origo_sf$cluster_id_50km
+
+# 5 km buffers for visualising the 50 km regional zones
+origo_buffers_50km <- st_buffer(origo_metric, dist = 5000)
+
+# Jitter overlapping points slightly (2 km) to aid visual separation, then back to 4326
+origo_sf_jittered <- st_jitter(origo_metric, amount = 2000) %>%
+  st_transform(4326)
+
+# Visualise: 50 km cluster regions as background, individual points on top
+tmap_mode("view")
+
+map_viz2 <- tm_shape(provinces) +
+  tm_polygons(fill = "grey95", col = "white", fill_alpha = 0.5) +
+
+  # 50 km regional cluster zones
+  tm_shape(origo_buffers_50km) +
+  tm_polygons(fill          = "cluster_id_50km",
+              fill_alpha    = 0.3,
+              col           = "cluster_id_50km",
+              fill.legend   = tm_legend_hide(),
+              col.legend    = tm_legend_hide()) +
+
+  # Individual jittered origin points with both cluster IDs in popup
+  tm_shape(origo_sf_jittered) +
+  tm_dots(fill       = "black",
+          size       = 0.1,
+          popup.vars = c("edh_person_id", "name", "origo_clean",
+                         "cluster_id_10km", "cluster_id_50km")) +
+
+  tm_view(set_zoom_limits = c(4, 12))
+
+map_viz2
+
+# Summary statistics
+print(paste("Unique Locations:", length(unique(origo_sf$origo_geometry))))
+print(paste("10km Clusters:",    nlevels(origo_sf$cluster_id_10km)))
+print(paste("50km Clusters:",    nlevels(origo_sf$cluster_id_50km)))
+```
+
+```{r cluster summary 50km}
+# Summarise 50 km clusters: people count, unique place names, example cities
+cluster_summary <- origo_sf %>%
+  st_drop_geometry() %>%
+  group_by(cluster_id_50km) %>%
+  summarise(
+    people_count        = n(),
+    unique_cities_count = n_distinct(origo_clean),
+    example_cities      = paste(head(unique(origo_clean), 3), collapse = ", ")
+  ) %>%
+  arrange(desc(people_count))
+
+# Top 10 biggest regional hubs
+head(cluster_summary, 10)
+```
+
+```{r cluster size statistics}
+# Statistical breakdown of how many people per cluster
+summary(cluster_summary$people_count)
+
+# Count clusters with only a single person (isolated locations)
+singleton_count <- sum(cluster_summary$people_count == 1)
+print(paste("Number of individuals from isolated regions:", singleton_count))
+```
+
+```{r top cities by origin}
+# Rank origin places by number of people recorded there
+top_cities <- origo_sf %>%
+  st_drop_geometry() %>%
+  count(origo_clean, sort = TRUE) %>%
+  rename(people = n)
+
+# Top 15 most frequent origin cities
+head(top_cities, 15)
+```
+
+```{r cluster bar chart and export}
+# Top 10 clusters by people count for bar chart
+top_10_clusters <- head(cluster_summary, 10)
+
+# Bar chart of top 10 regional origin hubs
+cluster_plot <- ggplot(top_10_clusters,
+                       aes(x = reorder(cluster_id_50km, -people_count),
+                           y = people_count)) +
+  geom_bar(stat = "identity", fill = "steelblue", color = "white") +
+  geom_text(aes(label = people_count), vjust = -0.5, size = 3.5) +
+  theme_minimal() +
+  labs(title    = "Top 10 Regional Origin Hubs (50km Clusters)",
+       subtitle = "Based on individuals in the EDH dataset",
+       x = "Cluster ID",
+       y = "Number of People") +
+  theme(axis.text.x = element_text(angle = 0))
+
+print(cluster_plot)
+
+# Export full cluster summary to CSV
+write.csv(cluster_summary, "summary_clusters_50km.csv", row.names = FALSE)
+
+# Quick preview of top hubs
+print("Top 5 Regional Hubs:")
+print(head(cluster_summary, 5))
+```
+
+
