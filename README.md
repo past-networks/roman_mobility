@@ -91,6 +91,23 @@ Shapefile available at https://public.opendatasoft.com/api/explore/v2.1/catalog/
 
 1. **cleaning_data/**: R scripts cleaning and streamlining the `origo` dataset [responsible: Hermankova]
 
+2. **`mobilitydata_analysis.Rmd`**: Full mobility analysis pipeline for the `origo` dataset [responsible: Wójtowicz]
+
+   Covers the following steps in order:
+   - **Data loading & examination** — loads the `origo_geo.parquet` dataset and Roman province boundaries, converts WKT geometry columns to `sf` objects, and inspects distributions of dating, gender, status, occupation, and inscription type
+   - **Top 10 route network** — filters valid origin–destination pairs, excludes self-loops (same origin and findspot), counts people per route, and produces three network visualisations: force-directed (Fruchterman-Reingold), hierarchical (sources left → destinations right), and a grid of individual route cards. Also checks for bidirectional routes.
+   - **Hexagon grids** — builds discrete global hexagon grids (dggridR) at resolution 12 (~96 km²) and 13 (~31 km²) for both origin and findspot locations; colour encodes number of people per cell
+   - **Network on map (styled)** — aggregates top 30 routes as straight lines onto the province map; blue dots = origins, red dots = destinations
+   - **Network on map (simple)** — uniform red lines for the top 30 routes; includes raw geometry inspection and exports `top_30_mobility_routes.csv`
+   - **Spatial clustering** — projects origin points to EPSG:3035 for metric operations, applies hierarchical complete-linkage clustering at 10 km and 50 km thresholds, visualises 5 km buffers and jittered points, exports `origo_clusters_assigned.csv` and `summary_clusters_50km.csv`
+   - **Cluster summaries** — bar chart of top 10 regional hubs (50 km clusters), singleton count, top cities by origin frequency
+
+   > **Key analytical decisions:**
+   > - Self-loops (same origin and findspot) are excluded from route analysis
+   > - Complete linkage prevents chaining — no two points within a cluster exceed the cut height distance
+   > - Resolutions 12 and 13 are both retained for hexagon comparison (~96 km² vs ~31 km² per cell)
+   > - The 10 km / 50 km cut heights and top-30 route cutoff are exploratory — final values should be justified in the thesis methods section
+
 ### `data`
 
 1. **large_data/**: locally saved, does not uppload to GitHub die to size of the data. Users need to download the datasets on their own. Guidance and provenance are provided in the individual scripts, or in the data section above.
